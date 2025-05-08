@@ -408,11 +408,6 @@ document.getElementById("user-input").addEventListener("keypress", (e) => {
 	}
 });
 
-// OpenAI API configuration
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY; // You'll need to set this via the extension options
-const OPENAI_API_URL = process.env.OPENAI_API_URL;
-const OPENAI_MODEL = process.env.OPENAI_MODEL;
-
 // Function to handle user queries
 async function handleUserQuery() {
 	console.log("handleUserQuery started");
@@ -452,192 +447,11 @@ async function handleUserQuery() {
 	messagesDiv.appendChild(loadingMessage);
 	loadingMessage.style.opacity = "1";
 
-	// Scroll to latest message
-	messagesDiv.scrollTop = messagesDiv.scrollHeight;
-
 	try {
-		// First check if we have any predefined responses
-		let responseText;
-		console.log("Checking for predefined responses...");
+		// Get response from Ollama
+		const response = await sendMessageToOllama(userInput);
 
-		if (isGreeting(userInput)) {
-			console.log("Input matched: Greeting");
-			responseText = getResponse("greetings");
-		} else if (isThanks(userInput)) {
-			console.log("Input matched: Thanks");
-			responseText = getRandomResponse(defaultAnswers.thanks);
-		} else if (isGoodbye(userInput)) {
-			console.log("Input matched: Goodbye");
-			responseText = getRandomResponse(defaultAnswers.goodbye);
-		} else if (isHelpRequest(userInput)) {
-			console.log("Input matched: Help request");
-			responseText = defaultAnswers.generalHelp;
-		} else {
-			console.log(
-				"No predefined response match, proceeding to OpenAI API call"
-			);
-			// Use the hardcoded API key directly
-			const apiKey = OPENAI_API_KEY;
-
-			console.log("Making OpenAI API call with model:", OPENAI_MODEL);
-			console.log("API Key (first 10 chars):", apiKey.substring(0, 10) + "...");
-
-			// Get page context to enhance the AI response
-			const pageTitle = document.title;
-			const pageURL = window.location.href;
-			const pageText = getVisibleText();
-
-			// Create context message for OpenAI
-			const contextPrompt = `You are Oracle, an AI web assistant. You're helping a user on a webpage titled "${pageTitle}" with URL "${pageURL}". 
-			The user's question or request is: "${userInput}". 
-			Use this page context to help answer their question or navigate the page:
-			${pageText.substring(0, 500)}...
-			Keep your answer concise, helpful, and relevant to the page content and user's query.`;
-
-			// Call OpenAI API for a response
-			const requestBody = {
-				model: OPENAI_MODEL,
-				messages: [
-					{
-						role: "system",
-						content:
-							"You are Oracle, a helpful AI web assistant that helps users navigate and understand web pages.",
-					},
-					{
-						role: "user",
-						content: contextPrompt,
-					},
-				],
-				max_tokens: 300,
-				temperature: 0.7,
-			};
-
-			console.log("Request body:", JSON.stringify(requestBody));
-
-			fetch(OPENAI_API_URL, {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					Authorization: `Bearer ${apiKey}`,
-				},
-				body: JSON.stringify(requestBody),
-			})
-				.then((response) => {
-					console.log("OpenAI API response status:", response.status);
-					if (!response.ok) {
-						return response.text().then((text) => {
-							console.error("API error response:", text);
-							try {
-								// Try to parse as JSON to get more details
-								const errorData = JSON.parse(text);
-								throw new Error(
-									`API error: ${response.status} - ${
-										errorData.error?.message || errorData.error || text
-									}`
-								);
-							} catch (e) {
-								// If parsing fails, just use the status
-								throw new Error(
-									`API request failed with status ${response.status}: ${text}`
-								);
-							}
-						});
-					}
-					return response.json();
-				})
-				.then((data) => {
-					console.log("OpenAI API response data:", data);
-
-					// Change to sent state
-					sendButton.classList.remove("sending");
-					sendButton.classList.add("sent");
-
-					// Wait 1 second before switching back to normal state
-					setTimeout(() => {
-						sendButton.classList.remove("sent");
-					}, 1000);
-
-					// Remove loading indicator
-					if (messagesDiv.contains(loadingMessage)) {
-						messagesDiv.removeChild(loadingMessage);
-					}
-
-					// Check if we have a valid response
-					if (data.choices && data.choices.length > 0) {
-						const aiMessage = document.createElement("div");
-						aiMessage.className = "ai-message";
-						aiMessage.textContent = data.choices[0].message.content.trim();
-						messagesDiv.appendChild(aiMessage);
-
-						// Apply animation
-						setTimeout(() => {
-							aiMessage.style.opacity = "1";
-							aiMessage.style.transform = "translateY(0)";
-						}, 10);
-					} else {
-						throw new Error("Invalid response from OpenAI API");
-					}
-
-					// Scroll to latest message
-					messagesDiv.scrollTop = messagesDiv.scrollHeight;
-				})
-				.catch((error) => {
-					console.error("Error calling OpenAI API:", error);
-
-					// Reset button state
-					sendButton.classList.remove("sending");
-
-					// Remove loading indicator if it exists
-					if (messagesDiv.contains(loadingMessage)) {
-						messagesDiv.removeChild(loadingMessage);
-					}
-
-					// Show error message
-					const errorMessage = document.createElement("div");
-					errorMessage.className = "ai-message error";
-
-					// Check if it's a quota error
-					if (
-						error.message.includes("429") ||
-						error.message.includes("quota") ||
-						error.message.includes("exceeded")
-					) {
-						errorMessage.innerHTML = `
-						<strong>API Quota Exceeded</strong><br>
-						Your OpenAI API quota has been exceeded. Please check your billing details or try again later.
-						<a href="https://platform.openai.com/account/billing" target="_blank" style="color: #3b82f6; text-decoration: underline;">Check Billing Settings</a>
-					`;
-					}
-					// Check if it's an API key issue
-					else if (
-						error.message.includes("401") ||
-						error.message.includes("invalid_api_key")
-					) {
-						errorMessage.textContent =
-							"There appears to be an issue with the API key. Please check the format and validity of your API key.";
-					} else {
-						errorMessage.textContent =
-							getResponse("error") + " Error: " + error.message;
-					}
-
-					messagesDiv.appendChild(errorMessage);
-
-					// Apply animation
-					setTimeout(() => {
-						errorMessage.style.opacity = "1";
-						errorMessage.style.transform = "translateY(0)";
-					}, 10);
-
-					// Scroll to latest message
-					messagesDiv.scrollTop = messagesDiv.scrollHeight;
-				});
-
-			// Return early since we're handling this asynchronously
-			return;
-		}
-
-		// For predefined responses (greetings, thanks, etc.)
-		// Remove loading indicator if it still exists
+		// Remove loading indicator
 		if (messagesDiv.contains(loadingMessage)) {
 			messagesDiv.removeChild(loadingMessage);
 		}
@@ -645,7 +459,7 @@ async function handleUserQuery() {
 		// Add AI response
 		const aiMessage = document.createElement("div");
 		aiMessage.className = "ai-message";
-		aiMessage.textContent = responseText;
+		aiMessage.textContent = response;
 		messagesDiv.appendChild(aiMessage);
 
 		// Apply animation
@@ -680,7 +494,7 @@ async function handleUserQuery() {
 		const errorMessage = document.createElement("div");
 		errorMessage.className = "ai-message error";
 		errorMessage.textContent =
-			getResponse("error") + " Error: " + error.message;
+			"I'm sorry, I'm having trouble connecting to my brain right now. Please try again later.";
 		messagesDiv.appendChild(errorMessage);
 
 		// Apply animation
@@ -694,39 +508,158 @@ async function handleUserQuery() {
 	}
 }
 
-// Helper function to get visible text from the current page
+// Function to get visible text and website structure
 function getVisibleText() {
-	// Get all visible text nodes from the body
-	const walker = document.createTreeWalker(
-		document.body,
-		NodeFilter.SHOW_TEXT,
-		{
-			acceptNode: function (node) {
-				// Check if the node's parent is visible
-				const style = window.getComputedStyle(node.parentElement);
-				if (
-					style.display === "none" ||
-					style.visibility === "hidden" ||
-					style.opacity === "0"
-				) {
-					return NodeFilter.FILTER_REJECT;
-				}
-				// Only accept nodes with non-empty text content
-				return node.textContent.trim()
-					? NodeFilter.FILTER_ACCEPT
-					: NodeFilter.FILTER_REJECT;
-			},
+	// Get website structure information
+	const websiteInfo = {
+		title: document.title,
+		url: window.location.href,
+		description:
+			document.querySelector('meta[name="description"]')?.content || "",
+		keywords: document.querySelector('meta[name="keywords"]')?.content || "",
+		headings: [],
+		links: [],
+		mainContent: "",
+		navigation: [],
+	};
+
+	// Get all headings
+	const headings = document.querySelectorAll("h1, h2, h3, h4, h5, h6");
+	headings.forEach((heading) => {
+		if (isElementVisible(heading)) {
+			websiteInfo.headings.push({
+				level: heading.tagName.toLowerCase(),
+				text: heading.textContent.trim(),
+			});
 		}
+	});
+
+	// Get navigation links
+	const navElements = document.querySelectorAll(
+		'nav, header, [role="navigation"]'
 	);
+	navElements.forEach((nav) => {
+		const links = nav.querySelectorAll("a");
+		links.forEach((link) => {
+			if (isElementVisible(link)) {
+				websiteInfo.navigation.push({
+					text: link.textContent.trim(),
+					href: link.href,
+				});
+			}
+		});
+	});
+
+	// Get main content
+	const mainContent = document.querySelector(
+		'main, [role="main"], #main, .main, article'
+	);
+	if (mainContent) {
+		websiteInfo.mainContent = getElementText(mainContent);
+	}
+
+	// Get all visible links
+	const links = document.querySelectorAll("a");
+	links.forEach((link) => {
+		if (isElementVisible(link)) {
+			websiteInfo.links.push({
+				text: link.textContent.trim(),
+				href: link.href,
+			});
+		}
+	});
+
+	// Format the website information
+	let context = `Website Information:
+Title: ${websiteInfo.title}
+URL: ${websiteInfo.url}
+Description: ${websiteInfo.description}
+Keywords: ${websiteInfo.keywords}
+
+Structure:
+${websiteInfo.headings.map((h) => `${h.level}: ${h.text}`).join("\n")}
+
+Navigation:
+${websiteInfo.navigation.map((n) => `- ${n.text} (${n.href})`).join("\n")}
+
+Main Content:
+${websiteInfo.mainContent}
+
+Available Links:
+${websiteInfo.links.map((l) => `- ${l.text} (${l.href})`).join("\n")}`;
+
+	return context;
+}
+
+// Helper function to check if an element is visible
+function isElementVisible(element) {
+	const style = window.getComputedStyle(element);
+	return (
+		style.display !== "none" &&
+		style.visibility !== "hidden" &&
+		style.opacity !== "0" &&
+		element.offsetWidth > 0 &&
+		element.offsetHeight > 0
+	);
+}
+
+// Helper function to get text content from an element
+function getElementText(element) {
+	const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+		acceptNode: function (node) {
+			return isElementVisible(node.parentElement)
+				? NodeFilter.FILTER_ACCEPT
+				: NodeFilter.FILTER_REJECT;
+		},
+	});
 
 	let text = "";
 	let node;
-	// Collect text from visible nodes, up to a reasonable limit
 	while ((node = walker.nextNode()) && text.length < 3000) {
 		text += node.textContent.trim() + " ";
 	}
 
 	return text.trim();
+}
+
+// Function to send message to Ollama backend
+async function sendMessageToOllama(message) {
+	try {
+		// Get comprehensive website context
+		const websiteContext = getVisibleText();
+
+		const response = await fetch("http://localhost:3000/api/chat", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				message,
+				pageContext: websiteContext,
+			}),
+		});
+
+		if (!response.ok) {
+			const errorData = await response.json();
+			throw new Error(errorData.error || "Failed to get response from server");
+		}
+
+		const data = await response.json();
+		return data.response;
+	} catch (error) {
+		console.error("Error:", error);
+
+		// Return specific error messages based on the error
+		if (error.message.includes("Ollama server is not running")) {
+			return "I'm having trouble connecting to my brain. Please make sure Ollama is running by executing 'ollama serve' in your terminal.";
+		} else if (error.message.includes("Llama 3.2 model not found")) {
+			return "I need to download my brain first. Please run 'ollama pull llama3.2' in your terminal.";
+		} else if (error.message.includes("Failed to get response from server")) {
+			return "I'm having trouble connecting to my server. Please make sure the backend server is running.";
+		} else {
+			return "I'm sorry, I'm having trouble connecting to my brain right now. Please try again later.";
+		}
+	}
 }
 
 // Add some micro-interactions
